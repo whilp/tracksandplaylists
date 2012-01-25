@@ -35,7 +35,7 @@ class SoundCloud(Source):
     def tracks(self, url):
         doc = html.parse(url)
         script = doc.xpath('//div[@id="main-content"]//script/text()')[0]
-        start, stop = a.find("(") + 1, a.rfind(")")
+        start, stop = script.find("(") + 1, script.rfind(")")
         data = json.loads(script[start:stop])
 
         yield Track(
