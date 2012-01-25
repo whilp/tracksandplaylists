@@ -1,0 +1,106 @@
+#!/usr/bin/env python
+
+import collections
+import json
+import sys
+
+from urlparse import urljoin
+
+from lxml import html, etree as xml
+from lxml.builder import E
+
+def main():
+    args = sys.argv[1:]
+
+    sources = Sources()
+    cmd, args = args[0], args[1:]
+    fn = getattr(sources, cmd)
+
+    for chunk in fn(args):
+        sys.stdout.write(chunk + "\n")
+
+class Source:
+    domain = None
+
+class SoundCloud(Source):
+    domain = "soundcloud.com"
+
+    def urls(self, url):
+        doc = html.parse(url)
+        hrefs = doc.xpath('//div[@id="tracks"]//div[@class="info-header"]//h3/a/@href')
+        for href in hrefs:
+            yield urljoin(url, href)
+
+    def tracks(self, url):
+        doc = html.parse(url)
+        script = doc.xpath('//div[@id="main-content"]//script/text()')[0]
+        start, stop = a.find("(") + 1, a.rfind(")")
+        data = json.loads(script[start:stop])
+
+        yield Track(
+            location=data["streamUrl"],
+            title=data["title"],
+            creator=data["user"]["username"])
+
+class OfficialFM(Source):
+    domain = "official.fm"
+    
+    def urls(self, url):
+        doc = html.parse(url)
+
+        for href in doc.xpath("//a[@title]/@href"):
+            if "/tracks/" in href:
+                yield href
+    
+    def tracks(self, url):
+        doc = xml.parse(url + ".xspf")
+        yield Track(
+            location=urljoin(url, doc.xpath('//enclosure[@type="stream"]/@url')[0]),
+            title=doc.xpath("//title/text()")[0],
+            creator=doc.xpath("//author/text()")[0])
+
+class Sources:
+    sources = [SoundCloud, OfficialFM]
+
+    def __init__(self, sources=None, **kwargs):
+        if sources is not None:
+            self.sources = sources
+
+    def choose(self, source):
+        for cls in self.sources:
+            if cls.domain in source:
+                return cls()
+
+    def playlist(self, urls):
+        tracks = []
+        for url in urls:
+            tracks.extend(self.choose(url).tracks(url))
+
+        yield str(Playlist(tracks))
+
+    def tracks(self, urls):
+        for url in urls:
+            for url in self.choose(url).urls(url):
+                yield url
+
+Track = collections.namedtuple("Track", "location title creator")
+
+class Playlist(collections.Iterable):
+    
+    def __init__(self, tracks):
+        self.tracks = tracks
+
+    def __iter__(self):
+        return iter(self.tracks)
+
+    def xspf(self):
+        return xml.tostring(E.playlist(E.trackList(*[
+            E.track(
+                E.location(unicode(track.location)),
+                E.title(unicode(track.title)),
+                E.creator(unicode(track.creator))
+            ) for track in self.tracks])))
+
+    __str__ = xspf
+
+main()
